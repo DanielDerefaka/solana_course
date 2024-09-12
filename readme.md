@@ -95,3 +95,187 @@ When a wallet processes a transaction request URL, it follows a four-step proced
 
 This multi-step process allows for dynamic transaction creation based on real-time data and user-specific information, offering a powerful tool for developers to create sophisticated blockchain interactions.
 
+**How to setup a Transaction**
+
+# Solana Pay Transaction Request 
+
+This guide demonstrates how to create a transaction request endpoint for Solana Pay using modern JavaScript and the latest Solana web3.js library.
+
+## Table of Contents
+
+1. [Introduction](#introduction)
+2. [Setting Up the API Endpoint](#setting-up-the-api-endpoint)
+3. [Handling GET Requests](#handling-get-requests)
+4. [Handling POST Requests](#handling-post-requests)
+5. [Building and Returning Transactions](#building-and-returning-transactions)
+6. [Confirming Transactions](#confirming-transactions)
+7. [Implementing Gated Transactions](#implementing-gated-transactions)
+
+## Introduction
+
+Solana Pay transaction requests allow for dynamic creation of transactions based on user data. This guide will walk you through creating an API endpoint that handles these requests using Next.js API Routes.
+
+## Setting Up the API Endpoint
+
+First, create a new file in your `pages/api` directory. We'll call it `transaction-request.js`:
+
+```javascript
+import { Connection, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { NextApiRequest, NextApiResponse } from 'next';
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method === 'GET') {
+    return handleGet(res);
+  } else if (req.method === 'POST') {
+    return handlePost(req, res);
+  } else {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+}
+```
+
+## Handling GET Requests
+
+The GET request should return basic information about the transaction request:
+
+```javascript
+function handleGet(res: NextApiResponse) {
+  res.status(200).json({
+    label: "My Solana Pay Store",
+    icon: "https://solana.com/src/img/branding/solanaLogoMark.svg",
+  });
+}
+```
+
+## Handling POST Requests
+
+The POST request is where we'll build the actual transaction:
+
+```javascript
+async function handlePost(req: NextApiRequest, res: NextApiResponse) {
+  const { account } = req.body;
+  if (!account) {
+    return res.status(400).json({ error: 'Missing account' });
+  }
+
+  try {
+    const transaction = await buildTransaction(new PublicKey(account));
+    const serializedTransaction = transaction.serialize({ requireAllSignatures: false });
+    const base64Transaction = serializedTransaction.toString('base64');
+
+    res.status(200).json({
+      transaction: base64Transaction,
+      message: 'Transfer of 0.001 SOL',
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error creating transaction' });
+  }
+}
+```
+
+## Building and Returning Transactions
+
+Here's how to build a simple transfer transaction:
+
+```javascript
+async function buildTransaction(account: PublicKey): Promise<Transaction> {
+  const connection = new Connection('https://api.devnet.solana.com');
+  const { blockhash } = await connection.getLatestBlockhash();
+
+  const transaction = new Transaction({
+    recentBlockhash: blockhash,
+    feePayer: account,
+  });
+
+  const recipientAccount = new PublicKey('INSERT_RECIPIENT_PUBLIC_KEY_HERE');
+  
+  const transferInstruction = SystemProgram.transfer({
+    fromPubkey: account,
+    toPubkey: recipientAccount,
+    lamports: 0.001 * LAMPORTS_PER_SOL,
+  });
+
+  transaction.add(transferInstruction);
+
+  return transaction;
+}
+```
+
+## Confirming Transactions
+
+To confirm transactions, you can use a reference key:
+
+```javascript
+import { findReference, FindReferenceError } from '@solana/pay';
+
+async function confirmTransaction(reference: PublicKey, connection: Connection) {
+  try {
+    const signatureInfo = await findReference(connection, reference, { finality: 'confirmed' });
+    return signatureInfo.signature;
+  } catch (error) {
+    if (error instanceof FindReferenceError) {
+      return null;
+    }
+    throw error;
+  }
+}
+```
+
+## Implementing Gated Transactions
+
+You can implement gated transactions by checking conditions before building the transaction. Here's an example that checks for NFT ownership:
+
+```javascript
+import { Metaplex } from '@metaplex-foundation/js';
+
+async function buildGatedTransaction(account: PublicKey, collectionAddress: PublicKey): Promise<Transaction | null> {
+  const connection = new Connection('https://api.devnet.solana.com');
+  const metaplex = new Metaplex(connection);
+
+  const nfts = await metaplex.nfts().findAllByOwner({ owner: account }).run();
+
+  const hasRequiredNFT = nfts.some(nft => 
+    nft.collection?.address.equals(collectionAddress)
+  );
+
+  if (!hasRequiredNFT) {
+    return null; // Or throw an error
+  }
+
+  // If the user has the required NFT, build and return the transaction
+  return buildTransaction(account);
+}
+```
+
+To use this in your POST handler:
+
+```javascript
+async function handlePost(req: NextApiRequest, res: NextApiResponse) {
+  const { account } = req.body;
+  if (!account) {
+    return res.status(400).json({ error: 'Missing account' });
+  }
+
+  try {
+    const collectionAddress = new PublicKey('INSERT_COLLECTION_ADDRESS_HERE');
+    const transaction = await buildGatedTransaction(new PublicKey(account), collectionAddress);
+    
+    if (!transaction) {
+      return res.status(403).json({ error: 'User does not have the required NFT' });
+    }
+
+    const serializedTransaction = transaction.serialize({ requireAllSignatures: false });
+    const base64Transaction = serializedTransaction.toString('base64');
+
+    res.status(200).json({
+      transaction: base64Transaction,
+      message: 'Gated transfer of 0.001 SOL',
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error creating transaction' });
+  }
+}
+```
+

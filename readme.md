@@ -279,3 +279,284 @@ async function handlePost(req: NextApiRequest, res: NextApiResponse) {
 }
 ```
 
+
+
+## Solana Pay QR codes
+
+
+One of the standout features of Solana Pay is its easy integration with QR codes. Since transfer and transaction requests are simply URLs, you can embed them into QR codes that you make available in your application or elsewhere.
+
+The `@solana/pay` library simplifies this with the provided `createQR` helper function. This function needs you to provide the following:
+
+- `url` - the URL of the transaction request.
+- `size` (optional) - the width and height of the QR code in pixels. Defaults to 512.
+- `background` (optional) - the background color. Defaults to white.
+- `color` (optional) - the foreground color. Defaults to black.
+
+Here's an example of how to use the `createQR` function to generate a QR code for a check-in location:
+
+```typescript
+import { createQR } from '@solana/pay';
+
+export function createCheckInQR(id: number) {
+  const url = new URL(`${window.location.origin}/api/checkIn`);
+  url.searchParams.append('id', id.toString());
+  
+  // Generate a random reference for this transaction
+  const reference = new Uint8Array(32);
+  window.crypto.getRandomValues(reference);
+  url.searchParams.append('reference', encodeURIComponent(buffer.Buffer.from(reference).toString('base64')));
+
+  // Create the QR code
+  const qr = createQR(url, 400, 'transparent', 'black');
+  return qr;
+}
+```
+
+In this example:
+- We create a URL for the check-in endpoint, including the location ID as a query parameter.
+- We generate a random reference for the transaction and add it to the URL.
+- We use `createQR` to generate the QR code, specifying a size of 400 pixels, a transparent background, and black foreground color.
+
+You can then use this function in your React component to display the QR code:
+
+```tsx
+import { useState, useEffect } from 'react';
+import { createCheckInQR } from '../utils/createQrCode/checkIn';
+
+export default function LocationQRCode({ id }: { id: number }) {
+  const [qr, setQr] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const qrCode = createCheckInQR(id);
+    setQr(qrCode);
+  }, [id]);
+
+  return (
+    <div>
+      <h2>Check-in for Location {id}</h2>
+      {qr && <div ref={(ref) => ref && ref.appendChild(qr)} />}
+    </div>
+  );
+}
+```
+
+
+## Setup
+
+1. Clone the repository:
+   ```
+   git clone https://github.com/your-repo/solana-pay-scavenger-hunt.git
+   cd solana-pay-scavenger-hunt
+   ```
+
+2. Install dependencies:
+   ```
+   yarn install
+   ```
+
+3. Set up environment variables:
+   - Rename `.env.example` to `.env`
+   - Fill in the required values in the `.env` file, for example:
+     ```
+     NEXT_PUBLIC_RPC_ENDPOINT=https://api.devnet.solana.com
+     EVENT_ORGANIZER_SECRET_KEY=your_secret_key_here
+     ```
+
+4. Run the development server:
+   ```
+   yarn dev
+   ```
+
+5. Set up ngrok for HTTPS:
+   ```
+   ngrok http 3000
+   ```
+   Use the HTTPS URL provided by ngrok to access your app from mobile devices.
+
+## Project Structure
+
+- `pages/`: Next.js pages and API routes
+- `components/`: React components
+- `utils/`: Utility functions and helpers
+- `public/`: Static assets
+
+## Key Components and Code Examples
+
+1. **Transaction Request Endpoint** (`pages/api/checkIn.ts`):
+
+This file handles GET and POST requests for Solana Pay. Here's a simplified version of the main handler:
+
+```typescript
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
+  if (req.method === "GET") {
+    return get(res);
+  } else if (req.method === "POST") {
+    return await post(req, res);
+  } else {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+}
+
+function get(res: NextApiResponse) {
+  res.status(200).json({
+    label: "Scavenger Hunt!",
+    icon: "https://solana.com/src/img/branding/solanaLogoMark.svg",
+  });
+}
+
+async function post(req: NextApiRequest, res: NextApiResponse) {
+  const { account } = req.body;
+  const { reference, id } = req.query;
+
+  // ... (validation and transaction building logic)
+
+  res.status(200).json({
+    transaction: transaction,
+    message: `You've found location ${id}!`,
+  });
+}
+```
+
+2. **QR Code Generator** (`utils/createQrCode/checkIn.ts`):
+
+This utility creates QR codes for Solana Pay requests:
+
+```typescript
+import { createQR } from '@solana/pay';
+
+export function createCheckInQR(id: number) {
+  const url = new URL(`${window.location.origin}/api/checkIn`);
+  url.searchParams.append('id', id.toString());
+  const qr = createQR(url, 400, 'transparent');
+  return qr;
+}
+```
+
+3. **Scavenger Hunt Program** (Anchor program on Devnet):
+
+Here's a simplified version of the Anchor program:
+
+```rust
+use anchor_lang::prelude::*;
+
+declare_id!("your_program_id_here");
+
+#[program]
+pub mod scavenger_hunt {
+    use super::*;
+
+    pub fn initialize(ctx: Context<Initialize>, game_id: Pubkey) -> Result<()> {
+        let user_state = &mut ctx.accounts.user_state;
+        user_state.user = ctx.accounts.user.key();
+        user_state.game_id = game_id;
+        user_state.last_location = Pubkey::default();
+        Ok(())
+    }
+
+    pub fn check_in(ctx: Context<CheckIn>, game_id: Pubkey, location: Pubkey) -> Result<()> {
+        let user_state = &mut ctx.accounts.user_state;
+        require!(user_state.game_id == game_id, ErrorCode::InvalidGame);
+        // Add logic to verify correct location order
+        user_state.last_location = location;
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct Initialize<'info> {
+    #[account(init, payer = user, space = 8 + 32 + 32 + 32)]
+    pub user_state: Account<'info, UserState>,
+    #[account(mut)]
+    pub user: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct CheckIn<'info> {
+    #[account(mut)]
+    pub user_state: Account<'info, UserState>,
+    pub user: Signer<'info>,
+    /// CHECK: This is not dangerous as we don't read or write from this account
+    pub event_organizer: UncheckedAccount<'info>,
+}
+
+#[account]
+pub struct UserState {
+    pub user: Pubkey,
+    pub game_id: Pubkey,
+    pub last_location: Pubkey,
+}
+```
+
+4. **Frontend** (`pages/index.tsx`):
+
+Here's a simplified version of the main page component:
+
+```tsx
+import { useState } from 'react';
+import { createCheckInQR } from '../utils/createQrCode/checkIn';
+
+export default function Home() {
+  const [locationId, setLocationId] = useState(1);
+
+  return (
+    <div>
+      <h1>Solana Pay Scavenger Hunt</h1>
+      <div>
+        {createCheckInQR(locationId)}
+      </div>
+      <button onClick={() => setLocationId(locationId + 1)}>
+        Next Location
+      </button>
+    </div>
+  );
+}
+```
+
+## Using the Latest Solana Standards
+
+This project uses the latest Solana standards as of September 2024:
+
+- Solana Web3.js v1.89.0 or later
+- @solana/pay v0.2.0 or later
+- @project-serum/anchor v0.26.0 or later
+
+Make sure to check for updates and adjust the code if newer versions are available.
+
+## Running the Scavenger Hunt
+
+1. Start the development server and set up ngrok as described in the Setup section.
+2. Open the ngrok HTTPS URL on your mobile device.
+3. Ensure your Solana wallet is set to Devnet.
+4. Scan the QR code for Location 1 to start the scavenger hunt.
+5. Follow the prompts to visit each location in order.
+
+## Important Concepts
+
+1. **Partial Signing**: The server partially signs the transaction before sending it to the client. This allows for additional security measures and control over the transaction.
+
+2. **PDA (Program Derived Address)**: Used to deterministically generate addresses for user state accounts.
+
+3. **Transaction Building**: Transactions are built server-side, including both the `initialize` and `check_in` instructions when necessary.
+
+4. **Error Handling**: Proper error handling is implemented both on the client and server side to provide a smooth user experience.
+
+## Challenges and Extensions
+
+After completing the basic scavenger hunt, try these challenges:
+
+1. Implement a reward system using SPL tokens or NFTs.
+2. Add time limits or other constraints to the scavenger hunt.
+3. Create a leaderboard for multiple participants.
+4. Integrate with real-world locations using geolocation.
+
+## Resources
+
+- [Solana Pay Documentation](https://docs.solanapay.com/)
+- [Solana Cookbook](https://solanacookbook.com/)
+- [Anchor Documentation](https://www.anchor-lang.com/)
+
